@@ -210,85 +210,50 @@
   var heroEl = $('.hero');
   var film = null;
   function Film(hero) {
+    // Film « travelling » : 3 plans superposés, zoom + fondu calculés par la carte graphique (aucun redessin)
     var M = window.HERO_FRAMES; if (!M || !M.n) return null;
-    var canvas = $('.hero-canvas', hero), ctx = canvas.getContext('2d', { alpha: false });
+    var media = $('.hero-media', hero), canvas = $('.hero-canvas', hero);
     var base = hero.getAttribute('data-frames') || 'assets/hero/';
     var self = { progress: 0, zoom: 1, ready: false, onProgress: null, n: M.n };
-    var set = null, imgs = [], loaded = [], loadedCount = 0, coarseTotal = 0, coarseDone = 0, drawn = -1, dirty = true;
+    var KEYS = [1, Math.round((M.n + 1) / 2), M.n], layers = [], set = null, done = 0;
+    var wrap = d.createElement('div'); wrap.className = 'hero-film';
+    wrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;contain:strict';
+    for (var k = 0; k < KEYS.length; k++) {
+      var im = new Image(); im.alt = ''; im.decoding = 'async';
+      im.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;will-change:transform,opacity;backface-visibility:hidden;transform:translate3d(0,0,0) scale(1);opacity:' + (k ? 0 : 1);
+      wrap.appendChild(im); layers.push(im);
+    }
+    if (canvas) { canvas.parentNode.insertBefore(wrap, canvas); canvas.style.display = 'none'; } else media.insertBefore(wrap, media.firstChild);
     function pickSet() { return (window.innerWidth / window.innerHeight) < 1 ? 'p' : 'l'; }
-    function srcOf(k, i) {
-      if (M.src && M.src[k]) { var arr = M.src[k]; return arr[Math.min(arr.length - 1, Math.round(i * (arr.length - 1) / Math.max(1, M.n - 1)))]; }
-      return base + k + '/' + ('00' + (i + 1)).slice(-3) + '.webp';
-    }
-    function order(n) { // première image, puis une sur 8, 4, 2, puis toutes : le défilement trouve toujours une image proche
-      var seen = {}, out = [];
-      [n, 8, 4, 2, 1].forEach(function (step, si) {
-        for (var i = 0; i < n; i += (si === 0 ? n : step)) if (!seen[i]) { seen[i] = 1; out.push(i); }
+    function load(s) {
+      set = s; done = 0;
+      layers.forEach(function (im, i) {
+        im.onload = im.onerror = function () { done++; if (self.onProgress) self.onProgress(done / layers.length); if (done === layers.length) { self.ready = true; apply(true); } };
+        im.src = base + s + '/' + ('00' + KEYS[i]).slice(-3) + '.webp';
       });
-      return out;
     }
-    function load(k) {
-      set = k; imgs = new Array(M.n); loaded = new Array(M.n); loadedCount = 0; drawn = -1;
-      var seq = order(M.n), coarse = seq.slice(0);
-      coarseTotal = coarse.length; coarseDone = 0;
-      var idx = 0, inflight = 0, MAX = 6;
-      function next() {
-        while (inflight < MAX && idx < seq.length) {
-          (function (i, isCoarse) {
-            var im = new Image(); im.decoding = 'async'; inflight++;
-            im.onload = im.onerror = function () {
-              inflight--; if (k !== set) return;
-              if (im.naturalWidth) { loaded[i] = true; loadedCount++; }
-              if (isCoarse) { coarseDone++; if (self.onProgress) self.onProgress(coarseDone / coarseTotal); }
-              dirty = true; next();
-            };
-            im.src = srcOf(k, i); imgs[i] = im;
-          })(seq[idx], idx < coarseTotal);
-          idx++;
-        }
-      }
-      next();
+    var shown = 0, shownZ = 1, last = -1;
+    function ease(t) { return t * t * (3 - 2 * t); }
+    function apply(force) {
+      var p = shown, z = shownZ;
+      // plan 1 → 2 sur la première moitié, 2 → 3 sur la seconde ; chaque plan avance (zoom) pendant qu'il est visible
+      var seg = p * 2, o2 = ease(Math.min(1, Math.max(0, (seg - .55) / .45))), o3 = ease(Math.min(1, Math.max(0, (seg - 1.55) / .45)));
+      var s1 = z * (1 + .22 * Math.min(1, seg)), s2 = z * (1.06 + .18 * Math.min(1, Math.max(0, seg - .55))), s3 = z * (1.12 - .12 * Math.min(1, Math.max(0, seg - 1.55) / .45 * 1));
+      var key = Math.round(p * 2000) + '|' + Math.round(z * 2000);
+      if (!force && key === last) return; last = key;
+      layers[0].style.transform = 'translate3d(0,0,0) scale(' + s1.toFixed(4) + ')';
+      layers[1].style.transform = 'translate3d(0,0,0) scale(' + s2.toFixed(4) + ')'; layers[1].style.opacity = o2.toFixed(3);
+      layers[2].style.transform = 'translate3d(0,0,0) scale(' + s3.toFixed(4) + ')'; layers[2].style.opacity = o3.toFixed(3);
     }
-    function nearest(i) {
-      if (loaded[i]) return i;
-      for (var d = 1; d < M.n; d++) { if (loaded[i - d]) return i - d; if (loaded[i + d]) return i + d; }
-      return -1;
-    }
-    var W = 0, H = 0;
-    function size() {
-      var dpr = Math.min(2, window.devicePixelRatio || 1);
-      W = Math.round(canvas.clientWidth * dpr); H = Math.round(canvas.clientHeight * dpr);
-      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
-      dirty = true;
-    }
-    var shownP = 0, shownZ = 1, first = true;
-    function cover(im, alpha) {
-      var iw = im.naturalWidth, ih = im.naturalHeight;
-      var s = Math.max(W / iw, H / ih) * shownZ, dw = iw * s, dh = ih * s;
-      ctx.globalAlpha = alpha; ctx.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh); ctx.globalAlpha = 1;
-    }
-    function draw() {
-      if (!W) return;
-      // lissage : la position affichée glisse vers la cible, sans à-coups ni images figées
-      if (first) { shownP = self.progress; shownZ = self.zoom; first = false; }
-      var dp = self.progress - shownP, dz = self.zoom - shownZ;
-      if (Math.abs(dp) < 1e-4 && Math.abs(dz) < 1e-4 && !dirty) return;
-      shownP += dp * .14; shownZ += dz * .14;
-      if (Math.abs(dp) < 1e-4) shownP = self.progress;
-      var f = shownP * (M.n - 1), i = Math.floor(f), t = f - i;
-      if (i >= M.n - 1) { i = M.n - 1; t = 0; }
-      var a = nearest(i); if (a < 0) return;
-      var b = (t > 0 && loaded[i + 1]) ? i + 1 : -1;
-      cover(imgs[a], 1);
-      if (b > 0) { var e = t * t * (3 - 2 * t); cover(imgs[b], e); }
-      dirty = (a !== i) || Math.abs(self.progress - shownP) > 1e-4 || Math.abs(self.zoom - shownZ) > 1e-4;
-      self.ready = true;
-    }
-    self.set = function (p, z) { if (p !== self.progress || z !== self.zoom) { self.progress = p; self.zoom = z || 1; dirty = true; } };
-    self.tick = draw;
-    self.resize = function () { var k = pickSet(); if (k !== set) load(k); size(); };
-    self.frame = function () { return Math.round(self.progress * (M.n - 1)); };
-    load(pickSet()); size();
+    self.set = function (p, z) { self.progress = p; self.zoom = z || 1; };
+    self.tick = function () {
+      shown += (self.progress - shown) * .18; shownZ += (self.zoom - shownZ) * .18;
+      if (Math.abs(self.progress - shown) < 1e-4) shown = self.progress;
+      apply(false);
+    };
+    self.resize = function () { var s = pickSet(); if (s !== set) load(s); };
+    self.frame = function () { return Math.round(shown * (M.n - 1)); };
+    load(pickSet());
     return self;
   }
 
