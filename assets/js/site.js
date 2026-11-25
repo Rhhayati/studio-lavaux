@@ -229,7 +229,7 @@
     }
     function load(k) {
       set = k; imgs = new Array(M.n); loaded = new Array(M.n); loadedCount = 0; drawn = -1;
-      var seq = order(M.n), coarse = seq.slice(0, Math.ceil(M.n / 4) + 1);
+      var seq = order(M.n), coarse = seq.slice(0);
       coarseTotal = coarse.length; coarseDone = 0;
       var idx = 0, inflight = 0, MAX = 6;
       function next() {
@@ -261,14 +261,28 @@
       if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
       dirty = true;
     }
+    var shownP = 0, shownZ = 1, first = true;
+    function cover(im, alpha) {
+      var iw = im.naturalWidth, ih = im.naturalHeight;
+      var s = Math.max(W / iw, H / ih) * shownZ, dw = iw * s, dh = ih * s;
+      ctx.globalAlpha = alpha; ctx.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh); ctx.globalAlpha = 1;
+    }
     function draw() {
-      if (!dirty || !W) return;
-      var i = Math.round(self.progress * (M.n - 1)), j = nearest(i);
-      if (j < 0) return;
-      var im = imgs[j], iw = im.naturalWidth, ih = im.naturalHeight;
-      var s = Math.max(W / iw, H / ih) * self.zoom, dw = iw * s, dh = ih * s;
-      ctx.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      drawn = j; dirty = j !== i; self.ready = true;
+      if (!W) return;
+      // lissage : la position affichée glisse vers la cible, sans à-coups ni images figées
+      if (first) { shownP = self.progress; shownZ = self.zoom; first = false; }
+      var dp = self.progress - shownP, dz = self.zoom - shownZ;
+      if (Math.abs(dp) < 1e-4 && Math.abs(dz) < 1e-4 && !dirty) return;
+      shownP += dp * .14; shownZ += dz * .14;
+      if (Math.abs(dp) < 1e-4) shownP = self.progress;
+      var f = shownP * (M.n - 1), i = Math.floor(f), t = f - i;
+      if (i >= M.n - 1) { i = M.n - 1; t = 0; }
+      var a = nearest(i); if (a < 0) return;
+      var b = (t > 0 && loaded[i + 1]) ? i + 1 : -1;
+      cover(imgs[a], 1);
+      if (b > 0) { var e = t * t * (3 - 2 * t); cover(imgs[b], e); }
+      dirty = (a !== i) || Math.abs(self.progress - shownP) > 1e-4 || Math.abs(self.zoom - shownZ) > 1e-4;
+      self.ready = true;
     }
     self.set = function (p, z) { if (p !== self.progress || z !== self.zoom) { self.progress = p; self.zoom = z || 1; dirty = true; } };
     self.tick = draw;
@@ -341,7 +355,7 @@
     // états de départ
     gsap.set([copy, devs, endEl], { visibility: 'visible' });
     if (sa) gsap.set(sa.lines, { yPercent: 110 });
-    if (sb) gsap.set(sb.chars, { yPercent: 70, opacity: 0, filter: 'blur(12px)' });
+    if (sb) gsap.set(sb.chars, { yPercent: 70, opacity: 0 });
     if (sc) gsap.set(sc.words, { opacity: 0, y: 14 });
     gsap.set(desk, { z: -900, rotateX: 38, y: 80, opacity: 0, transformPerspective: 1600 });
     gsap.set(p1, { x: -120, y: 260, rotateY: 50, rotateZ: -6, opacity: 0 });
@@ -357,13 +371,13 @@
       .to('.hero-open', { y: -40, opacity: 0, duration: 1.2, ease: 'power1.in' }, .25)
       .to('.hero-top', { opacity: 0, duration: 1 }, 6.6);
     if (sa) tl.to(sa.lines, { yPercent: 0, duration: 1.1, ease: 'power3.out', stagger: .12 }, 4.3);
-    if (sb) tl.to(sb.chars, { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 1.1, ease: 'power3.out', stagger: .07 }, 4.5);
+    if (sb) tl.to(sb.chars, { yPercent: 0, opacity: 1, duration: 1.1, ease: 'power3.out', stagger: .07 }, 4.5);
     if (sc) tl.to(sc.words, { opacity: 1, y: 0, duration: .6, stagger: .05, ease: 'power2.out' }, 5.1);
     // le titre grandit et se dissout dans l'image
     tl.to(title, { scale: 1.32, duration: 1.4, ease: 'power1.in' }, 6.4);
-    if (sb) tl.to(sb.chars, { opacity: 0, filter: 'blur(18px)', yPercent: -20, duration: 1, stagger: { each: .05, from: 'center' }, ease: 'power1.in' }, 6.5);
-    if (sa) tl.to(sa.lines, { opacity: 0, filter: 'blur(10px)', duration: .9 }, 6.5);
-    if (sc) tl.to(sc.words, { opacity: 0, filter: 'blur(8px)', duration: .7, stagger: .02 }, 6.4);
+    if (sb) tl.to(sb.chars, { opacity: 0, yPercent: -20, duration: 1, stagger: { each: .05, from: 'center' }, ease: 'power1.in' }, 6.5);
+    if (sa) tl.to(sa.lines, { opacity: 0, duration: .9 }, 6.5);
+    if (sc) tl.to(sc.words, { opacity: 0, duration: .7, stagger: .02 }, 6.4);
     tl.to(dim, { opacity: .5, duration: 1.4 }, 6.8)
       .to(desk, { z: 0, rotateX: 0, y: 0, opacity: 1, duration: 1.6, ease: 'power3.out' }, 7.0)
       .to(p1, { x: 0, y: 0, rotateY: 16, rotateZ: -2, opacity: 1, z: 80, duration: 1.5, ease: 'power3.out' }, 7.35)
